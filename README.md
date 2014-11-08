@@ -1,4 +1,4 @@
 mining-data
 ===========
 
-implementation of some data mining algorithm (such as Jaccard Similarity, etc.) 
+Implementation of some data mining algorithms (such as Jaccard Similarity, etc.) 

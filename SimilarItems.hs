@@ -2,7 +2,9 @@ module SimilarItems (jaccardSimilarity,
                     jaccardBagSimilarity,
                     shingle,
                     hashing,
-                    hashings)
+                    hashings,
+                    generateCharacteristicMatrix,
+                    minhashingSignature)
 
 where
 import qualified Data.Set as S
@@ -10,10 +12,11 @@ import qualified Data.List as L
 import qualified Data.Ratio as R
 import qualified Data.Hashable as H
 import qualified Data.Text as T
+import qualified Data.Maybe as M
 
 
 -- example of usage:
--- jaccardSimilarity [1,2,3,4,5] [3,4,5,6,7,8] ==> 3/8
+-- $> jaccardSimilarity [1,2,3,4,5] [3,4,5,6,7,8] ==> 3/8
 
 jaccardSimilarity :: Ord a => [a] -> [a] -> R.Ratio Int
 jaccardSimilarity list1 list2 =
@@ -28,7 +31,7 @@ jaccardSimilarity list1 list2 =
 
 
 -- example of usage:
--- jaccardBagSimilarity ['a','a','a','b'] ['a', 'a', 'b', 'b', 'c'] ==> 1 / 3
+-- $> jaccardBagSimilarity ['a','a','a','b'] ['a', 'a', 'b', 'b', 'c'] ==> 1 / 3
 
 jaccardBagSimilarity :: Ord a => [a] -> [a] -> R.Ratio Int
 jaccardBagSimilarity list1 list2 =
@@ -59,7 +62,7 @@ numberOfOccurrences list1 list2 = map (\x ->
 -- Shingling is a way to transform a document (string of characters) to set representation
 
 -- example of usage:
--- shingle "ammarhamidbasymeleh" 2
+-- $> shingle "ammarhamidbasymeleh" 2
 -- fromList ["am","ar","as","ba","db","eh","el","ha","id","le","ma","me","mi","mm","rh","sy","ym"]
 
 shingle :: String -> Int -> S.Set String
@@ -94,3 +97,91 @@ cleanDocument document =
     documentWithoutSpaceAndNewline = T.replace newline emptySpace documentWithoutSpace -- remove newline
   in
     T.unpack documentWithoutSpaceAndNewline
+
+
+
+-- generate characteristic matrix (see page 81 from mining data syllabus from Coursera (Stanford))
+-- this is useful pre-step to compress large data and still be able to check Jaccard Similarity (using minhashing)
+-- Element ￼ S1  S2  S3  S4
+--       a ￼ 1   0   0   1
+--       b ￼ 0   0   1   0
+--       c ￼ 0   1   0   1
+--       d ￼ 1   0   1   1
+--       e ￼ 0   0   1   0
+
+-- example of usage:
+-- $> generateCharacteristicMatrix [['a', 'd'], ['c'], ['b', 'd', 'e'], ['a', 'c', 'd']] ['a', 'b', 'c', 'd', 'e']
+-- [(0,[True,False,False,True]),(1,[False,False,True,False]),(2,[False,True,False,True]),(3,[True,False,True,True]),(4,[False,False,True,False])]
+
+                                     -- columns   rows
+generateCharacteristicMatrix :: Ord a => [[a]] -> [a] -> [(Int, [Bool])]
+generateCharacteristicMatrix lists universalList =
+  let
+    -- remove duplicate by transforming back and forth to Set
+    universalSet = S.toList (S.fromList universalList)
+    sets = map (\list -> S.toList (S.fromList list)) lists
+  in
+    map (\element ->
+            let
+              M.Just index = L.elemIndex element universalSet
+            in
+              (index, map (\set -> L.elem element set) sets)
+        )
+    universalSet
+
+
+
+-- compute minhashing signature for each set
+
+-- example of usage:
+-- before using minhashingSignature, first generate characteristic matrix! (or doing it inline)
+-- $> generateCharacteristicMatrix [['a', 'd'], ['c'], ['b', 'd', 'e'], ['a', 'c', 'd']] ['a', 'b', 'c', 'd', 'e']
+-- [(0,[True,False,False,True]),(1,[False,False,True,False]),(2,[False,True,False,True]),(3,[True,False,True,True]),(4,[False,False,True,False])]
+
+-- $> minhashingSignature (generateCharacteristicMatrix [['a', 'd'], ['c'], ['b', 'd', 'e'], ['a', 'c', 'd']] ['a', 'b', 'c', 'd', 'e']) [(\x -> mod (x + 1) 5), (\x -> mod (3*x + 1) 5)]
+-- [[1,0],[3,2],[0,0],[1,0]]
+
+-- visualization example:
+-- 1. characteristic matrix:
+-- Element ￼ S1  S2  S3  S4
+--       a ￼ 1   0   0   1
+--       b ￼ 0   0   1   0
+--       c ￼ 0   1   0   1
+--       d ￼ 1   0   1   1
+--       e ￼ 0   0   1   0
+
+-- 2. Minhashing result:
+--    S1 S2 S3 S4
+-- h1  1  3  0  1
+-- h2  0  2  0  0
+
+                     -- characteristic mattrix  -- hash functions
+minhashingSignature :: [(Int, [Bool])] -> [(Int -> Int)] -> [[Int]]
+minhashingSignature characteristicMatrix hashFunctions =
+  let
+    preprocessedMatrix =
+                  map (\(index, row) ->
+                        map (\element ->
+                                  if element then fromIntegral index
+                                  else fromIntegral (-1) -- to identify for False (where 0 can be used for index)
+                            )
+                        row
+                      )
+                  characteristicMatrix
+
+    transposedMatrixWithComputation = map (\fun ->
+                              map (\list ->
+                                    map (\x ->
+                                            if(x > (-1)) then fun x
+                                            else fromIntegral (2^31 - 1) -- to mimic infinity in Int32
+                                        )
+                                    list)
+                              (L.transpose preprocessedMatrix)
+                          )
+                      hashFunctions
+
+    minhashingResult = map (\xss ->
+                                map (\xs -> L.minimum xs) xss)
+                       transposedMatrixWithComputation -- intermediate result from the perspective of hash function
+  in
+    L.transpose minhashingResult -- minhashing signature for each set

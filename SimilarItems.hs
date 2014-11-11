@@ -4,7 +4,8 @@ module SimilarItems (jaccardSimilarity,
                     hashing,
                     hashings,
                     generateCharacteristicMatrix,
-                    minhashingSignature)
+                    minhashingSignature,
+                    localitySensitiveHashing)
 
 where
 import qualified Data.Set as S
@@ -185,3 +186,32 @@ minhashingSignature characteristicMatrix hashFunctions =
                        transposedMatrixWithComputation -- intermediate result from the perspective of hash function
   in
     L.transpose minhashingResult -- minhashing signature for each set
+
+
+-- create locality-sensitive hashing for a given minhashing signature
+
+-- example of usage:
+-- $> localitySensitiveHashing [[1,2,3,4], [9,10,11,12]] 2
+-- [[[1,2],[9,10]],[[3,4],[11,12]]]
+
+                       --minhash sig.  -- bands
+localitySensitiveHashing :: [[Int]] -> Int -> [[[Int]]]
+localitySensitiveHashing [[]] _ = error "minhashing signature should be non-empty list"
+localitySensitiveHashing minhashingSignature bands
+    | L.length (head minhashingSignature) `mod` bands /= 0 = error "minhash signature row `mod` bands should be 0 ==> b * r = n where is the number of row in minhash signature"
+    | otherwise =
+      let
+        transposedMinhashingSignature = L.transpose minhashingSignature
+        rows = (L.length (head minhashingSignature)) `quot` bands
+      in
+        map L.transpose (localitySensitiveHashing' transposedMinhashingSignature bands rows)
+
+
+localitySensitiveHashing' :: [[Int]] -> Int -> Int -> [[[Int]]]
+localitySensitiveHashing' [] _ _ = []
+localitySensitiveHashing' transposedMinhashingSignature bands rows =
+    let
+      headMinHashSignature = L.take rows transposedMinhashingSignature
+      tailMinHashSignature = L.drop rows transposedMinhashingSignature
+    in
+      L.insert headMinHashSignature (localitySensitiveHashing' tailMinHashSignature bands rows)
